@@ -214,7 +214,7 @@ public class VaultOperations {
             return false;
         }
 
-        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
+        player.openInventory(inv);
 
         // Check if the inventory was actually opened
         if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
@@ -314,7 +314,7 @@ public class VaultOperations {
             return false;
         }
 
-        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
+        player.openInventory(inv);
 
         // Check if the inventory was actually opened
         if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
