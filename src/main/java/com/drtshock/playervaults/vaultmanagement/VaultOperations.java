@@ -34,47 +34,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Supplier;
 
 public class VaultOperations {
 
     private static final AtomicBoolean LOCKED = new AtomicBoolean(false);
-
-    public static final class VaultGate {
-
-        private static final ConcurrentHashMap<VaultKey, ReentrantLock> LOCKS = new ConcurrentHashMap<>();
-
-        public static <T> T withLock(VaultKey key, Supplier<T> body) {
-            ReentrantLock lock = LOCKS.computeIfAbsent(key, k -> new ReentrantLock());
-            lock.lock();
-            try {
-                return body.get();
-            } finally {
-                try {
-                    lock.unlock();
-                } finally {
-                    if (!lock.hasQueuedThreads()) {
-                        LOCKS.remove(key, lock);
-                    }
-                }
-            }
-        }
-
-        public static void withLock(VaultKey key, Runnable body) {
-            withLock(key, () -> {
-                body.run();
-                return null;
-            });
-        }
-
-        public record VaultKey(String ownerKey, int number) {
-            @Override
-            public String toString() {
-                return ownerKey + " " + number;
-            }
-        }
-    }
 
     /**
      * Gets whether or not player vaults are locked
@@ -96,10 +59,12 @@ public class VaultOperations {
 
         if (locked) {
             for (Player player : PlayerVaults.getInstance().getServer().getOnlinePlayers()) {
-                InventoryView view = player.getOpenInventory();
-                if (view != null && view.getTopInventory() != null && view.getTopInventory().getHolder() instanceof VaultHolder) {
-                    PlayerVaults.scheduler().runAtEntity(player, task -> player.closeInventory());
-                    PlayerVaults.getInstance().getTL().locked().title().send(player);
+                if (player.getOpenInventory() != null) {
+                    InventoryView view = player.getOpenInventory();
+                    if (view.getTopInventory().getHolder() instanceof VaultHolder) {
+                        PlayerVaults.scheduler().runAtEntity(player, task -> player.closeInventory());
+                        PlayerVaults.getInstance().getTL().locked().title().send(player);
+                    }
                 }
             }
         }
@@ -178,7 +143,7 @@ public class VaultOperations {
         if (player.isSleeping() || player.isDead() || !player.isOnline()) {
             return false;
         }
-        final int number;
+        int number;
         try {
             number = Integer.parseInt(arg);
             if (number < 1) {
@@ -189,44 +154,49 @@ public class VaultOperations {
             return false;
         }
 
-        if (!checkPerms(player, number)) {
+        if (checkPerms(player, number)) {
+            if (free || EconomyOperations.payToOpen(player, number)) {
+                VaultViewInfo info = new VaultViewInfo(player.getUniqueId().toString(), number);
+
+                final Inventory inv = PlayerVaults.getInstance().getOpenInventories().computeIfAbsent(info.toString(), (key) -> {
+                    Inventory loadedVault = VaultManager.getInstance().loadOwnVault(player, number, getMaxVaultSize(player));
+                    if (loadedVault == null) {
+                        PlayerVaults.debug(String.format("Failed to open null vault %d for %s. This is weird.", number, player.getName()));
+                    }
+                    return loadedVault;
+                });
+
+                if (inv == null) {
+                    PlayerVaults.debug(String.format("Failed to open null vault %d for %s. This is weird.", number, player.getName()));
+                    return false;
+                }
+
+                if (PlayerVaults.getInstance().getOpenInventories().get(info.toString()) != inv) {
+                     PlayerVaults.debug("Vault for " + player.getName() + " was already opened by another thread.");
+                     return true;
+                }
+
+                PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
+
+                // Check if the inventory was actually opened
+                if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
+                    PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
+                    PlayerVaults.getInstance().getOpenInventories().remove(info.toString());
+                    return false; // inventory open event was cancelled.
+                }
+
+                if (send) {
+                    PlayerVaults.getInstance().getTL().openVault().title().with("vault", arg).send(player);
+                }
+                return true;
+            } else {
+                PlayerVaults.getInstance().getTL().insufficientFunds().title().send(player);
+                return false;
+            }
+        } else {
             PlayerVaults.getInstance().getTL().noPerms().title().send(player);
-            return false;
         }
-
-        if (!free && !EconomyOperations.payToOpen(player, number)) {
-            PlayerVaults.getInstance().getTL().insufficientFunds().title().send(player);
-            return false;
-        }
-
-        final String ownerKey = player.getUniqueId().toString();
-        final VaultViewInfo info = new VaultViewInfo(ownerKey, number);
-        final VaultGate.VaultKey gateKey = new VaultGate.VaultKey(ownerKey, number);
-
-        Inventory inv = VaultGate.withLock(gateKey, () ->
-            PlayerVaults.getInstance().getOpenInventories().computeIfAbsent(info.toString(), key ->
-                VaultManager.getInstance().loadOwnVault(player, number, getMaxVaultSize(player))
-            )
-        );
-
-        if (inv == null) {
-            PlayerVaults.debug(String.format("Failed to open null vault %d for %s. This is weird.", number, player.getName()));
-            return false;
-        }
-
-        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
-
-        // Check if the inventory was actually opened
-        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
-            PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
-            PlayerVaults.getInstance().getOpenInventories().remove(info.toString());
-            return false; // inventory open event was cancelled.
-        }
-
-        if (send) {
-            PlayerVaults.getInstance().getTL().openVault().title().with("vault", arg).send(player);
-        }
-        return true;
+        return false;
     }
 
     /**
@@ -249,7 +219,7 @@ public class VaultOperations {
      * Open another player's vault.
      *
      * @param player The player to open to.
-     * @param vaultOwner The name or UUID of the vault owner.
+     * @param vaultOwner The name of the vault owner.
      * @param arg The vault number to open.
      * @return Whether or not the player was allowed to open it.
      */
@@ -266,7 +236,9 @@ public class VaultOperations {
             return false;
         }
 
-        final int number;
+        long time = System.currentTimeMillis();
+
+        int number = 0;
         try {
             number = Integer.parseInt(arg);
             if (number < 1) {
@@ -275,61 +247,41 @@ public class VaultOperations {
             }
         } catch (NumberFormatException nfe) {
             PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
-            return false;
         }
 
-        final String holderKey = VaultManager.normalizeHolderKey(vaultOwner);
-        final VaultViewInfo info = new VaultViewInfo(holderKey, number);
-        final VaultGate.VaultKey gateKey = new VaultGate.VaultKey(holderKey, number);
-
-        long time = System.currentTimeMillis();
-
-        Inventory inv = VaultGate.withLock(gateKey, () -> {
-            Inventory cached = PlayerVaults.getInstance().getOpenInventories().get(info.toString());
-            if (cached != null) {
-                return cached;
-            }
-            Inventory loaded = VaultManager.getInstance().loadOtherVault(holderKey, number, getMaxVaultSize(holderKey));
-            if (loaded != null) {
-                PlayerVaults.getInstance().getOpenInventories().put(info.toString(), loaded);
-            }
-            return loaded;
-        });
-
-        // Resolve a nice display name if possible
-        String displayName = holderKey;
+        Inventory inv = VaultManager.getInstance().loadOtherVault(vaultOwner, number, getMaxVaultSize(vaultOwner));
+        String name = vaultOwner;
         try {
-            UUID uuid = UUID.fromString(holderKey);
-            OfflinePlayer op = Bukkit.getOfflinePlayer(uuid);
-            if (op.getName() != null) {
-                displayName = op.getName();
-            }
+            OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(UUID.fromString(vaultOwner));
+            name = offlinePlayer.getName();
         } catch (Exception e) {
             // not a player
         }
 
         if (inv == null) {
             PlayerVaults.getInstance().getTL().vaultDoesNotExist().title().send(player);
-            PlayerVaults.debug("Opening other vault that does not fully exist.", time);
-            return false;
+        } else {
+            PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
+
+            // Check if the inventory was actually opened
+            if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
+                PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
+                return false; // inventory open event was cancelled.
+            }
+            if (send) {
+                PlayerVaults.getInstance().getTL().openOtherVault().title().with("vault", arg).with("player", name).send(player);
+            }
+            PlayerVaults.debug("opening other vault", time);
+
+            // Need to set ViewInfo for a third party vault for the opening player.
+            VaultViewInfo info = new VaultViewInfo(vaultOwner, number);
+            PlayerVaults.getInstance().getInVault().put(player.getUniqueId().toString(), info);
+            PlayerVaults.getInstance().getOpenInventories().put(player.getUniqueId().toString(), inv);
+            return true;
         }
 
-        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
-
-        // Check if the inventory was actually opened
-        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
-            PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
-            return false; // inventory open event was cancelled.
-        }
-
-        if (send) {
-            PlayerVaults.getInstance().getTL().openOtherVault().title().with("vault", arg).with("player", displayName).send(player);
-        }
-        PlayerVaults.debug("opening other vault", time);
-
-        // Track which vault this viewer is in
-        PlayerVaults.getInstance().getInVault().put(player.getUniqueId().toString(), info);
-        return true;
+        PlayerVaults.debug("opening other vault returning false", time);
+        return false;
     }
 
     /**
@@ -342,27 +294,25 @@ public class VaultOperations {
         if (isLocked()) {
             return;
         }
-
-        if (!isNumber(arg)) {
-            PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
-            return;
-        }
-
-        final int number;
-        try {
-            number = Integer.parseInt(arg);
-            if (number == 0) {
+        if (isNumber(arg)) {
+            int number = 0;
+            try {
+                number = Integer.parseInt(arg);
+                if (number == 0) {
+                    PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
+                    return;
+                }
+            } catch (NumberFormatException nfe) {
                 PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
-                return;
             }
-        } catch (NumberFormatException nfe) {
-            PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
-            return;
-        }
 
-        if (EconomyOperations.refundOnDelete(player, number)) {
-            VaultManager.getInstance().deleteVault(player, player.getUniqueId().toString(), number);
-            PlayerVaults.getInstance().getTL().deleteVault().title().with("vault", arg).send(player);
+            if (EconomyOperations.refundOnDelete(player, number)) {
+                VaultManager.getInstance().deleteVault(player, player.getUniqueId().toString(), number);
+                PlayerVaults.getInstance().getTL().deleteVault().title().with("vault", arg).send(player);
+            }
+
+        } else {
+            PlayerVaults.getInstance().getTL().mustBeNumber().title().send(player);
         }
     }
 
@@ -377,37 +327,27 @@ public class VaultOperations {
         if (isLocked()) {
             return;
         }
-        if (!sender.hasPermission(Permission.DELETE)) {
-            PlayerVaults.getInstance().getTL().noPerms().title().send(sender);
-            return;
-        }
-        if (!isNumber(arg)) {
-            PlayerVaults.getInstance().getTL().mustBeNumber().title().send(sender);
-            return;
-        }
+        if (sender.hasPermission(Permission.DELETE)) {
+            if (isNumber(arg)) {
+                int number = 0;
+                try {
+                    number = Integer.parseInt(arg);
+                    if (number == 0) {
+                        PlayerVaults.getInstance().getTL().mustBeNumber().title().send(sender);
+                        return;
+                    }
+                } catch (NumberFormatException nfe) {
+                    PlayerVaults.getInstance().getTL().mustBeNumber().title().send(sender);
+                }
 
-        final int number;
-        try {
-            number = Integer.parseInt(arg);
-            if (number == 0) {
+                VaultManager.getInstance().deleteVault(sender, holder, number);
+                PlayerVaults.getInstance().getTL().deleteOtherVault().title().with("vault", arg).with("player", holder).send(sender);
+            } else {
                 PlayerVaults.getInstance().getTL().mustBeNumber().title().send(sender);
-                return;
             }
-        } catch (NumberFormatException nfe) {
-            PlayerVaults.getInstance().getTL().mustBeNumber().title().send(sender);
-            return;
+        } else {
+            PlayerVaults.getInstance().getTL().noPerms().title().send(sender);
         }
-
-        VaultManager.getInstance().deleteVault(sender, holder, number);
-        String display = holder;
-        try {
-            UUID uuid = UUID.fromString(holder);
-            OfflinePlayer op = Bukkit.getOfflinePlayer(uuid);
-            if (op.getName() != null) display = op.getName();
-        } catch (Exception e) {
-            // The return instance here can be suppressed
-        }
-        PlayerVaults.getInstance().getTL().deleteOtherVault().title().with("vault", arg).with("player", display).send(sender);
     }
 
     /**
@@ -447,9 +387,9 @@ public class VaultOperations {
 
     public static int countVaults(Player player) {
         UUID uuid = player.getUniqueId();
-        PlayerCount cached = countCache.get(uuid);
-        if (cached != null && Instant.now().isBefore(cached.time().plus(secondsToLive, ChronoUnit.SECONDS))) {
-            return cached.count;
+        PlayerCount count = countCache.get(uuid);
+        if (count != null && count.time().isAfter(Instant.now().plus(secondsToLive, ChronoUnit.SECONDS))) {
+            return count.count;
         }
         int vaultCount = 0;
         for (int x = 1; x <= PlayerVaults.getInstance().getMaxVaultAmountPermTest(); x++) {

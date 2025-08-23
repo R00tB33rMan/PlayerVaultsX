@@ -42,7 +42,6 @@ import com.google.common.collect.Sets;
 import com.google.gson.Gson;
 import com.tcoded.folialib.FoliaLib;
 import com.tcoded.folialib.impl.PlatformScheduler;
-import dev.kitteh.cardboardbox.CardboardBox;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
@@ -62,6 +61,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
+import dev.kitteh.cardboardbox.CardboardBox;
 import sun.misc.Unsafe;
 
 import java.io.BufferedReader;
@@ -374,7 +374,7 @@ public class PlayerVaults extends JavaPlugin {
                 Inventory inventory = player.getOpenInventory().getTopInventory();
                 if (inventory.getViewers().size() == 1) {
                     VaultViewInfo info = this.inVault.get(player.getUniqueId().toString());
-                    VaultManager.getInstance().saveVault(inventory, info.getVaultName(), info.getNumber());
+                    VaultManager.getInstance().saveVault(inventory, player.getUniqueId().toString(), info.getNumber());
                     this.openInventories.remove(info.toString());
                     // try this to make sure that they can't make further edits if the process hangs.
                     PlayerVaults.scheduler().runAtEntity(player, task -> player.closeInventory());
