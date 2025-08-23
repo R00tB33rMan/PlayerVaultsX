@@ -27,7 +27,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.File;
 import java.io.IOException;
@@ -69,7 +68,7 @@ public class VaultManager {
      */
     public void saveVault(Inventory inventory, String target, int number) {
         YamlConfiguration yaml = getPlayerVaultFile(target, true);
-        int size = VaultOperations.getMaxVaultSize(target);
+        VaultOperations.getMaxVaultSize(target);
         String serialized = CardboardBoxSerialization.toStorage(inventory, target);
         yaml.set(String.format(VAULTKEY, number), serialized);
         saveFileSync(target, yaml);
@@ -241,7 +240,6 @@ public class VaultManager {
             }
         }
 
-
         return vaults;
     }
 
@@ -258,27 +256,24 @@ public class VaultManager {
      * @param number The vault number.
      */
     public void deleteVault(CommandSender sender, final String holder, final int number) {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                File file = new File(directory, holder + ".yml");
-                if (!file.exists()) {
-                    return;
-                }
+        PlayerVaults.scheduler().runAsync(task -> {
+            File file = new File(directory, holder + ".yml");
+            if (!file.exists()) {
+                return;
+            }
 
-                YamlConfiguration playerFile = YamlConfiguration.loadConfiguration(file);
-                if (file.exists()) {
-                    playerFile.set(String.format(VAULTKEY, number), null);
-                    if (cachedVaultFiles.containsKey(holder)) {
-                        cachedVaultFiles.put(holder, playerFile);
-                    }
-                    try {
-                        playerFile.save(file);
-                    } catch (IOException ignored) {
-                    }
+            YamlConfiguration playerFile = YamlConfiguration.loadConfiguration(file);
+            if (file.exists()) {
+                playerFile.set(String.format(VAULTKEY, number), null);
+                if (cachedVaultFiles.containsKey(holder)) {
+                    cachedVaultFiles.put(holder, playerFile);
+                }
+                try {
+                    playerFile.save(file);
+                } catch (IOException ignored) {
                 }
             }
-        }.runTaskAsynchronously(PlayerVaults.getInstance());
+        });
 
         OfflinePlayer player = Bukkit.getPlayer(holder);
         if (player != null) {
@@ -312,10 +307,7 @@ public class VaultManager {
      * @return The holder's vault config file.
      */
     public YamlConfiguration getPlayerVaultFile(String holder, boolean createIfNotFound) {
-        if (cachedVaultFiles.containsKey(holder)) {
-            return cachedVaultFiles.get(holder);
-        }
-        return loadPlayerVaultFile(holder, createIfNotFound);
+        return cachedVaultFiles.computeIfAbsent(holder, key -> loadPlayerVaultFile(key, createIfNotFound));
     }
 
     public YamlConfiguration loadPlayerVaultFile(String holder) {

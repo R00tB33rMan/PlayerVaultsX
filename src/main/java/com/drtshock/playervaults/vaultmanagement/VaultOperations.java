@@ -62,7 +62,7 @@ public class VaultOperations {
                 if (player.getOpenInventory() != null) {
                     InventoryView view = player.getOpenInventory();
                     if (view.getTopInventory().getHolder() instanceof VaultHolder) {
-                        player.closeInventory();
+                        PlayerVaults.scheduler().runAtEntity(player, task -> player.closeInventory());
                         PlayerVaults.getInstance().getTL().locked().title().send(player);
                     }
                 }
@@ -156,22 +156,34 @@ public class VaultOperations {
 
         if (checkPerms(player, number)) {
             if (free || EconomyOperations.payToOpen(player, number)) {
-                Inventory inv = VaultManager.getInstance().loadOwnVault(player, number, getMaxVaultSize(player));
+                VaultViewInfo info = new VaultViewInfo(player.getUniqueId().toString(), number);
+
+                final Inventory inv = PlayerVaults.getInstance().getOpenInventories().computeIfAbsent(info.toString(), (key) -> {
+                    Inventory loadedVault = VaultManager.getInstance().loadOwnVault(player, number, getMaxVaultSize(player));
+                    if (loadedVault == null) {
+                        PlayerVaults.debug(String.format("Failed to open null vault %d for %s. This is weird.", number, player.getName()));
+                    }
+                    return loadedVault;
+                });
+
                 if (inv == null) {
                     PlayerVaults.debug(String.format("Failed to open null vault %d for %s. This is weird.", number, player.getName()));
                     return false;
                 }
 
-                player.openInventory(inv);
+                if (PlayerVaults.getInstance().getOpenInventories().get(info.toString()) != inv) {
+                     PlayerVaults.debug("Vault for " + player.getName() + " was already opened by another thread.");
+                     return true;
+                }
+
+                PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
 
                 // Check if the inventory was actually opened
                 if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
                     PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
+                    PlayerVaults.getInstance().getOpenInventories().remove(info.toString());
                     return false; // inventory open event was cancelled.
                 }
-
-                VaultViewInfo info = new VaultViewInfo(player.getUniqueId().toString(), number);
-                PlayerVaults.getInstance().getOpenInventories().put(info.toString(), inv);
 
                 if (send) {
                     PlayerVaults.getInstance().getTL().openVault().title().with("vault", arg).send(player);
@@ -249,7 +261,7 @@ public class VaultOperations {
         if (inv == null) {
             PlayerVaults.getInstance().getTL().vaultDoesNotExist().title().send(player);
         } else {
-            player.openInventory(inv);
+            PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
 
             // Check if the inventory was actually opened
             if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
@@ -369,7 +381,7 @@ public class VaultOperations {
     private record PlayerCount(int count, Instant time) {
     }
 
-    private static Map<UUID, PlayerCount> countCache = new ConcurrentHashMap<>();
+    private static final Map<UUID, PlayerCount> countCache = new ConcurrentHashMap<>();
 
     private static final int secondsToLive = 2;
 
@@ -387,7 +399,7 @@ public class VaultOperations {
         }
         PlayerCount newCount = new PlayerCount(vaultCount, Instant.now());
         countCache.put(uuid, newCount);
-        PlayerVaults.getInstance().getServer().getScheduler().runTaskLater(PlayerVaults.getInstance(), () -> {
+        PlayerVaults.scheduler().runLater(() -> {
             if (countCache.get(uuid) == newCount) {
                 countCache.remove(uuid); // Do a lil cleanup to avoid the world's smallest memory leak
             }
