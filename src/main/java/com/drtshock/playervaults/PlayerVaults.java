@@ -38,6 +38,7 @@ import com.drtshock.playervaults.util.Permission;
 import com.drtshock.playervaults.vaultmanagement.EconomyOperations;
 import com.drtshock.playervaults.vaultmanagement.VaultManager;
 import com.drtshock.playervaults.vaultmanagement.VaultViewInfo;
+import com.google.common.collect.Sets;
 import com.google.gson.Gson;
 import com.tcoded.folialib.FoliaLib;
 import com.tcoded.folialib.impl.PlatformScheduler;
@@ -104,8 +105,8 @@ public class PlayerVaults extends JavaPlugin {
     private final ConcurrentHashMap<String, VaultViewInfo> inVault = new ConcurrentHashMap<>();
     // VaultViewInfo - Inventory
     private final ConcurrentHashMap<String, Inventory> openInventories = new ConcurrentHashMap<>();
-    private final Set<Material> blockedMats = ConcurrentHashMap.newKeySet();
-    private final Set<Enchantment> blockedEnchs = ConcurrentHashMap.newKeySet();
+    private final Set<Material> blockedMats = Sets.newConcurrentHashSet();
+    private final Set<Enchantment> blockedEnchs = Sets.newConcurrentHashSet();
     private boolean blockWithModelData = false;
     private boolean blockWithoutModelData = false;
     private boolean useVault;
@@ -739,7 +740,7 @@ public class PlayerVaults extends JavaPlugin {
         }
     }
 
-    private final Set<UUID> told = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> told = Sets.newConcurrentHashSet();
 
     public void updateNotification(Player player) {
         if (updateResponse == null || !player.hasPermission(Permission.ADMIN)) {
