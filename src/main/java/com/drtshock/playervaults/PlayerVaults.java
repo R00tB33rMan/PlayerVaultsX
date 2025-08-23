@@ -339,6 +339,7 @@ public class PlayerVaults extends JavaPlugin {
                     }
                 }
             } catch (Exception ignored) {
+                // Ignored case/handler.
             }
         }, 1, 20 /* ticks */ * 60 /* seconds in a minute */ * 60 /* minutes in an hour*/);
     }

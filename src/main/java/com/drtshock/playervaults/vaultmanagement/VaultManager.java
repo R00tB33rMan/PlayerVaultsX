@@ -81,7 +81,9 @@ public class VaultManager {
         try {
             UUID uuid = UUID.fromString(input);
             return uuid.toString();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            // Ignored case/handler.
+        }
 
         OfflinePlayer byName = Bukkit.getOfflinePlayer(input);
         if (byName != null && byName.getUniqueId() != null) {
