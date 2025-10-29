@@ -214,13 +214,15 @@ public class VaultOperations {
             return false;
         }
 
-        player.openInventory(inv);
+        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
 
         // Check if the inventory was actually opened
-        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
+        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory) {
             PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
             PlayerVaults.getInstance().getOpenInventories().remove(info.toString());
             return false; // inventory open event was cancelled.
+        } else {
+            player.getOpenInventory().getTopInventory();
         }
 
         if (send) {
@@ -314,12 +316,14 @@ public class VaultOperations {
             return false;
         }
 
-        player.openInventory(inv);
+        PlayerVaults.scheduler().runAtEntity(player, task -> player.openInventory(inv));
 
         // Check if the inventory was actually opened
-        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory || player.getOpenInventory().getTopInventory() == null) {
+        if (player.getOpenInventory().getTopInventory() instanceof CraftingInventory) {
             PlayerVaults.debug(String.format("Cancelled opening vault %s for %s from an outside source.", arg, player.getName()));
             return false; // inventory open event was cancelled.
+        } else {
+            player.getOpenInventory().getTopInventory();
         }
 
         if (send) {
